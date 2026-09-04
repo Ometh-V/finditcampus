@@ -152,6 +152,21 @@
     opacity:0.75;
     margin-left:6px;
   }
+  .reset-demo-btn{
+    border:1px solid rgba(255,255,255,0.35);
+    background:transparent;
+    color:#F6ECD8;
+    font-family:'Work Sans', sans-serif;
+    font-weight:600;
+    font-size:13px;
+    padding:9px 14px;
+    border-radius:7px;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  .reset-demo-btn:hover{
+    background:rgba(255,255,255,0.12);
+  }
 
   /* ---------- Board ---------- */
   main{
@@ -414,6 +429,7 @@
     <button role="tab" aria-pressed="false" data-filter="found">Found<span class="count-pill" id="count-found"></span></button>
     <button role="tab" aria-pressed="false" data-filter="resolved">Resolved<span class="count-pill" id="count-resolved"></span></button>
   </div>
+  <button class="reset-demo-btn" id="resetDemoBtn" type="button">Reset demo data</button>
 </div>
 
 <main>
@@ -658,6 +674,18 @@
 
   document.getElementById('searchInput').addEventListener('input', (e)=>{
     searchTerm = e.target.value;
+    render();
+  });
+
+  document.getElementById('resetDemoBtn').addEventListener('click', ()=>{
+    const ok = confirm('Reset the board? This clears every note you\'ve added and brings back the 3 starting example notes.');
+    if(!ok) return;
+    items = seedData();
+    saveItems(items);
+    searchTerm = '';
+    document.getElementById('searchInput').value = '';
+    currentFilter = 'all';
+    document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.filter==='all' ? 'true':'false'));
     render();
   });
 

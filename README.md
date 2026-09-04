@@ -1,6 +1,6 @@
 # FindIt @ Campus 📌
 
-A shared corkboard for a campus community — pin a note when you lose
+A shared corkboard for a campus community - pin a note when you lose
 something, pin a note when you find something, and connect with whoever's on
 the other end.
 
@@ -19,13 +19,13 @@ and campus security one place to report and search for lost or found items.
 
 ## Features
 
-- 📌 **Pin a note** for something lost or found — item title, category,
+- 📌 **Pin a note** for something lost or found - item title, category,
   description, location, date, and contact info.
 - 🔍 **Live search** across title, description, location, and category.
-- 🗂️ **Filter tabs** — All / Lost / Found / Resolved, each with a live count.
+- 🗂️ **Filter tabs** - All / Lost / Found / Resolved, each with a live count.
 - ✅ **Mark resolved** (or reopen) once an item is returned, and remove notes
   entirely.
-- 💾 **Persists in the browser** via `localStorage` — no login, no backend,
+- 💾 **Persists in the browser** via `localStorage` - no login, no backend,
   works fully offline after the first load.
 - 📱 Responsive, accessible corkboard-styled UI (keyboard focus states,
   reduced-motion support, semantic markup).
@@ -44,7 +44,7 @@ and campus security one place to report and search for lost or found items.
 No dependencies, no installation.
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/findit-campus.git
+git clonehttps://github.com/Ometh-V/finditcampus.git
 cd findit-campus
 ```
 
@@ -88,16 +88,8 @@ findit-campus/
 
 All notes are stored only in the visitor's own browser. There's no account
 system and no server-side database, so notes won't sync across devices or
-visitors — this keeps the app genuinely working with no setup, at the cost of
+visitors - this keeps the app genuinely working with no setup, at the cost of
 shared state. A natural next step would be swapping `localStorage` for a
 small backend (e.g. Firebase or a lightweight REST API) so notes are visible
 to everyone who visits.
 
-## Course context
-
-Built for **IIC 2223 – Web Application Development**, Lab 1 Part 1: build the
-best working web app possible in one hour using AI tools.
-
-## License
-
-For coursework use. No license specified beyond that.
