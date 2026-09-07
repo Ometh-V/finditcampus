@@ -70,7 +70,7 @@
   }
   .brand .tag{
     font-family:'Caveat', cursive;
-    color:var(--pin-red);
+    color:#8A2F09;
     background:#F6ECD8;
     display:inline-block;
     padding:2px 10px;
@@ -166,6 +166,33 @@
   }
   .reset-demo-btn:hover{
     background:rgba(255,255,255,0.12);
+  }
+  .sync-banner{
+    max-width:1100px;
+    margin:16px auto 0;
+    padding:0 28px;
+    font-size:13px;
+  }
+  .sync-banner .pill{
+    display:inline-block;
+    padding:6px 12px;
+    border-radius:20px;
+    font-weight:600;
+  }
+  .sync-banner .pill.synced{
+    background:#DCEEDD;
+    color:#2f5f3f;
+    border:1px solid #a9d1ac;
+  }
+  .sync-banner .pill.local{
+    background:#F6ECD8;
+    color:#6b4a1f;
+    border:1px solid #d8bd8a;
+  }
+  .sync-banner .pill.error{
+    background:#F6DAD0;
+    color:#8B2F0A;
+    border:1px solid #e3a892;
   }
 
   /* ---------- Board ---------- */
@@ -430,14 +457,19 @@
     <button role="tab" aria-pressed="false" data-filter="resolved">Resolved<span class="count-pill" id="count-resolved"></span></button>
   </div>
   <button class="reset-demo-btn" id="resetDemoBtn" type="button">Reset demo data</button>
+  <button class="reset-demo-btn" id="exportBtn" type="button">Export notes (.json)</button>
+  <label class="reset-demo-btn" id="importLabel" for="importInput" style="cursor:pointer;">Import notes (.json)</label>
+  <input type="file" id="importInput" accept="application/json" class="sr-only" />
 </div>
+<div class="sync-banner" id="syncBanner" role="status"></div>
+<p id="statusRegion" class="sr-only" role="status" aria-live="polite"></p>
 
 <main>
-  <div class="board" id="board" aria-live="polite"></div>
+  <div class="board" id="board"></div>
 </main>
 
 <footer>
-  FindIt @ Campus — a student-run lost &amp; found board. Notes are stored only in this browser (no account needed).
+  FindIt @ Campus — a student-run lost &amp; found board. No account needed to post a note.
 </footer>
 
 <div class="overlay" id="overlay">
@@ -477,6 +509,7 @@
 
       <label for="dateInput">Date</label>
       <input type="date" id="dateInput" required />
+      <div class="field-error" id="err-date">The date can't be in the future.</div>
 
       <label for="contactInput">Contact info</label>
       <input type="text" id="contactInput" placeholder="Email, phone, or student handle" required />
@@ -490,7 +523,36 @@
   </div>
 </div>
 
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getFirestore, collection, addDoc, doc, updateDoc, deleteDoc,
+  onSnapshot, query, orderBy, getDocs
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+// -----------------------------------------------------------------------
+// To make this board sync across every visitor (resolving D1): paste your
+// own Firebase project's config below (Firebase console → Project settings
+// → your web app). Leave the placeholders as-is to keep running in
+// local-only mode (each browser sees only its own notes).
+//
+// SECURITY NOTE (see D2 in the audit report): a public apiKey here is
+// normal and safe — it identifies the project, it is not a secret. Real
+// access control must come from Firestore Security Rules, configured in
+// the Firebase console, NOT from anything in this file. The default
+// "test mode" rules allow anyone to read/write/delete everything and are
+// only meant for short-term development.
+// -----------------------------------------------------------------------
+const firebaseConfig = {
+  apiKey: "AIzaSyDhN2DtEdA7L74rxsZSvued2QKvzeFtuSI",
+  authDomain: "finditcampus-8f57a.firebaseapp.com",
+  projectId: "finditcampus-8f57a",
+  storageBucket: "finditcampus-8f57a.firebasestorage.app",
+  messagingSenderId: "312519521094",
+  appId: "1:312519521094:web:86abb7bc8c07a7f1192b47"
+};
+const isFirebaseConfigured = firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("YOUR_");
+
 (function(){
   const STORAGE_KEY = 'finditCampusItems_v1';
   const NOTE_STYLES = [
@@ -551,12 +613,105 @@
   function saveItems(items){
     try{
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+      return true;
     }catch(e){
-      alert('Could not save your note. Your browser storage might be full or blocked.');
+      alert('Could not save — your browser storage might be full or blocked (private browsing sometimes does this). This note was NOT saved; reloading the page will show it missing.');
+      return false;
     }
   }
 
-  let items = loadItems();
+  // ---------------------------------------------------------------------
+  // Storage adapters (resolves D1). Both expose the same async shape —
+  // subscribe/add/toggleResolved/remove/replaceAll — so every event handler
+  // below works identically regardless of which backend is active. The
+  // local adapter preserves D6's fix: it only calls onChange (which is what
+  // updates the in-memory `items` and re-renders) if the save actually
+  // succeeded, so a failed write never shows a false "success" in the UI.
+  // The Firestore adapter gets the same property for free: `items` is only
+  // ever updated by the onSnapshot listener firing on CONFIRMED server
+  // state, so a failed write simply never changes what's on screen.
+  // ---------------------------------------------------------------------
+  function createLocalStore(){
+    let onChange = ()=>{};
+    function commit(all){ if(saveItems(all)) onChange(all); }
+    return {
+      mode: 'local',
+      subscribe(cb){ onChange = cb; onChange(loadItems()); },
+      add(item){
+        const all = loadItems();
+        all.push({ ...item, id: uid(), created: Date.now() });
+        commit(all);
+        return Promise.resolve();
+      },
+      toggleResolved(id, current){
+        const all = loadItems().map(i => i.id === id ? { ...i, resolved: !current } : i);
+        commit(all);
+        return Promise.resolve();
+      },
+      remove(id){
+        const all = loadItems().filter(i => i.id !== id);
+        commit(all);
+        return Promise.resolve();
+      },
+      replaceAll(newItems){
+        const normalized = newItems.map(it => ({ ...it, id: uid(), created: it.created || Date.now() }));
+        commit(normalized);
+        return Promise.resolve();
+      }
+    };
+  }
+
+  function createFirestoreStore(db){
+    const colRef = collection(db, 'notes');
+    return {
+      mode: 'firestore',
+      subscribe(cb){
+        const q = query(colRef, orderBy('created', 'desc'));
+        onSnapshot(q, snap => {
+          cb(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        }, err => {
+          console.error(err);
+          showSyncStatus('error', '⚠️ Could not reach the shared board - check your Firestore config and security rules.');
+        });
+      },
+      async add(item){
+        try{ await addDoc(colRef, { ...item, created: Date.now() }); }
+        catch(e){ alert('Could not save your note to the shared board: ' + e.message); }
+      },
+      async toggleResolved(id, current){
+        try{ await updateDoc(doc(db, 'notes', id), { resolved: !current }); }
+        catch(e){ alert('Could not update that note: ' + e.message); }
+      },
+      async remove(id){
+        try{ await deleteDoc(doc(db, 'notes', id)); }
+        catch(e){ alert('Could not remove that note: ' + e.message); }
+      },
+      async replaceAll(newItems){
+        try{
+          const snap = await getDocs(colRef);
+          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+          await Promise.all(newItems.map(({ id, ...rest }) => addDoc(colRef, { ...rest, created: rest.created || Date.now() })));
+        }catch(e){ alert('Could not update the shared board: ' + e.message); }
+      }
+    };
+  }
+
+  function showSyncStatus(kind, text){
+    const banner = document.getElementById('syncBanner');
+    banner.innerHTML = `<span class="pill ${kind}">${text}</span>`;
+  }
+
+  let store;
+  if(isFirebaseConfigured){
+    const app = initializeApp(firebaseConfig);
+    store = createFirestoreStore(getFirestore(app));
+    showSyncStatus('synced', '🔗 Synced - everyone who opens this link shares the same board.');
+  } else {
+    store = createLocalStore();
+    showSyncStatus('local', '💾 Local-only demo - notes stay in this browser. Add a Firebase config to sync across devices (see comment near the top of the script).');
+  }
+
+  let items = [];
   let currentFilter = 'all';
   let searchTerm = '';
 
@@ -576,6 +731,16 @@
     return d.toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' });
   }
 
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const PHONE_RE = /^\+?[\d\s().-]{7,}$/;
+  function contactMarkup(raw){
+    const safe = escapeHTML(raw);
+    const trimmed = raw.trim();
+    if(EMAIL_RE.test(trimmed)) return `<a href="mailto:${safe}">${safe}</a>`;
+    if(PHONE_RE.test(trimmed)) return `<a href="tel:${safe.replace(/[^\d+]/g,'')}">${safe}</a>`;
+    return safe;
+  }
+
   function updateCounts(){
     const lost = items.filter(i=>i.type==='lost' && !i.resolved).length;
     const found = items.filter(i=>i.type==='found' && !i.resolved).length;
@@ -584,6 +749,10 @@
     document.getElementById('count-lost').textContent = ` (${lost})`;
     document.getElementById('count-found').textContent = ` (${found})`;
     document.getElementById('count-resolved').textContent = ` (${resolved})`;
+  }
+
+  function announce(text){
+    document.getElementById('statusRegion').textContent = text;
   }
 
   function render(){
@@ -609,6 +778,8 @@
 
     board.innerHTML = '';
 
+    announce(`${visible.length} note${visible.length === 1 ? '' : 's'} shown.`);
+
     if(visible.length === 0){
       const empty = document.createElement('div');
       empty.className = 'empty-state';
@@ -633,9 +804,10 @@
         </div>
         <h3>${escapeHTML(item.title)}</h3>
         <p class="desc">${escapeHTML(item.description)}</p>
+        <p class="meta-line"><b>Category:</b> ${escapeHTML(item.category)}</p>
         <p class="meta-line"><b>Where:</b> ${escapeHTML(item.location)}</p>
         <p class="meta-line"><b>When:</b> ${formatDate(item.date)}</p>
-        <p class="meta-line"><b>Contact:</b> ${escapeHTML(item.contact)}</p>
+        <p class="meta-line"><b>Contact:</b> ${contactMarkup(item.contact)}</p>
         <div class="note-actions">
           <button class="ok" data-action="toggle" data-id="${item.id}">${item.resolved ? 'Reopen' : 'Mark resolved'}</button>
           <button class="danger" data-action="delete" data-id="${item.id}">Remove</button>
@@ -650,16 +822,14 @@
     if(!btn) return;
     const id = btn.dataset.id;
     const action = btn.dataset.action;
+    const current = items.find(i => i.id === id);
+    if(!current) return;
     if(action === 'delete'){
       if(confirm('Remove this note from the board?')){
-        items = items.filter(i=>i.id !== id);
-        saveItems(items);
-        render();
+        store.remove(id);
       }
     } else if(action === 'toggle'){
-      items = items.map(i=> i.id===id ? {...i, resolved: !i.resolved} : i);
-      saveItems(items);
-      render();
+      store.toggleResolved(id, current.resolved);
     }
   });
 
@@ -678,19 +848,62 @@
   });
 
   document.getElementById('resetDemoBtn').addEventListener('click', ()=>{
-    const ok = confirm('Reset the board? This clears every note you\'ve added and brings back the 3 starting example notes.');
-    if(!ok) return;
-    items = seedData();
-    saveItems(items);
+    const warning = store.mode === 'firestore'
+      ? 'Reset the SHARED board for everyone? This deletes every note anyone has posted and brings back the 3 starting example notes.'
+      : 'Reset the board? This clears every note you\'ve added and brings back the 3 starting example notes.';
+    if(!confirm(warning)) return;
+    store.replaceAll(seedData());
     searchTerm = '';
     document.getElementById('searchInput').value = '';
     currentFilter = 'all';
     document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.filter==='all' ? 'true':'false'));
-    render();
   });
 
+  document.getElementById('exportBtn').addEventListener('click', ()=>{
+    const blob = new Blob([JSON.stringify(items, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `findit-campus-backup-${todayISO()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('importInput').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let parsed;
+      try{ parsed = JSON.parse(reader.result); }
+      catch(err){ alert('That file is not valid JSON — import cancelled.'); return; }
+      if(!Array.isArray(parsed)){ alert('That file does not look like a FindIt @ Campus export — import cancelled.'); return; }
+      const required = ['id','type','title','category','description','location','date','contact','resolved','created'];
+      const valid = parsed.every(item => required.every(k => k in item));
+      if(!valid){ alert('That file is missing expected fields — import cancelled.'); return; }
+      const warning = store.mode === 'firestore'
+        ? `Replace the SHARED board for everyone with the ${parsed.length} note(s) from this file?`
+        : `Replace the current board with the ${parsed.length} note(s) from this file?`;
+      if(!confirm(warning)) return;
+      store.replaceAll(parsed);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  let lastFocusedBeforeModal = null;
+
+  function getFocusableModalEls(){
+    return Array.from(document.querySelectorAll('#overlay .modal button, #overlay .modal input, #overlay .modal select, #overlay .modal textarea'))
+      .filter(el => !el.disabled && el.offsetParent !== null);
+  }
+
   function openModal(){
+    lastFocusedBeforeModal = document.activeElement;
     overlay.classList.add('open');
+    document.getElementById('dateInput').max = todayISO();
     document.getElementById('dateInput').value = todayISO();
     document.getElementById('titleInput').focus();
   }
@@ -698,7 +911,23 @@
     overlay.classList.remove('open');
     form.reset();
     document.querySelectorAll('.field-error').forEach(el=>el.style.display='none');
+    if(lastFocusedBeforeModal) lastFocusedBeforeModal.focus();
   }
+
+  // Basic focus trap: keep Tab/Shift+Tab cycling inside the modal while it's open,
+  // so keyboard users can't tab into the corkboard hidden behind the overlay.
+  overlay.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Tab' || !overlay.classList.contains('open')) return;
+    const focusable = getFocusableModalEls();
+    if(focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if(e.shiftKey && document.activeElement === first){
+      e.preventDefault(); last.focus();
+    } else if(!e.shiftKey && document.activeElement === last){
+      e.preventDefault(); first.focus();
+    }
+  });
 
   document.getElementById('openModalBtn').addEventListener('click', openModal);
   document.getElementById('closeModalBtn').addEventListener('click', closeModal);
@@ -706,7 +935,7 @@
   overlay.addEventListener('click', (e)=>{ if(e.target === overlay) closeModal(); });
   document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && overlay.classList.contains('open')) closeModal(); });
 
-  form.addEventListener('submit', (e)=>{
+  form.addEventListener('submit', async (e)=>{
     e.preventDefault();
     const title = document.getElementById('titleInput').value.trim();
     const desc = document.getElementById('descInput').value.trim();
@@ -726,20 +955,54 @@
       if(!val){ el.style.display='block'; valid = false; }
       else { el.style.display='none'; }
     });
+
+    const dateErr = document.getElementById('err-date');
+    if(date > todayISO()){
+      dateErr.style.display = 'block';
+      valid = false;
+    } else {
+      dateErr.style.display = 'none';
+    }
+
     if(!valid) return;
 
-    items.push({
-      id: uid(), type, title, category, description: desc,
-      location, date, contact, resolved:false, created: Date.now()
-    });
-    saveItems(items);
+    const isLikelyDuplicate = items.some(i =>
+      !i.resolved &&
+      i.type === type &&
+      i.title.trim().toLowerCase() === title.toLowerCase() &&
+      i.location.trim().toLowerCase() === location.toLowerCase()
+    );
+    if(isLikelyDuplicate && !confirm('A very similar active note (same title, type and location) already exists. Pin this one anyway?')){
+      return;
+    }
+
+    // A matching note of the OPPOSITE type (a "found" note against an existing "lost"
+    // note, or vice versa) is not a duplicate to warn about — it's the exact connection
+    // this board exists to make, so surface it rather than staying silent.
+    const possibleMatch = items.find(i =>
+      !i.resolved &&
+      i.type !== type &&
+      i.title.trim().toLowerCase() === title.toLowerCase() &&
+      i.location.trim().toLowerCase() === location.toLowerCase()
+    );
+
+    await store.add({ type, title, category, description: desc, location, date, contact, resolved:false });
     closeModal();
     currentFilter = 'all';
     document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.filter==='all' ? 'true':'false'));
-    render();
+
+    if(possibleMatch){
+      alert(
+        `Possible match! There's already a ${possibleMatch.type.toUpperCase()} note for "${possibleMatch.title}" ` +
+        `at ${possibleMatch.location}. Your note has been pinned — check the board and reach out via the contact info on that note.`
+      );
+    }
   });
 
-  render();
+  store.subscribe(newItems => {
+    items = newItems;
+    render();
+  });
 })();
 </script>
 
