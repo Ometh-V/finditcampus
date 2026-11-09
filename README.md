@@ -7,7 +7,7 @@ the other end.
 Built as a single-page web app with **zero setup**: no server, no build step,
 no database. Open `index.html` and it just works.
 
-**Live demo:** _[add your GitHub Pages URL here once deployed]_
+**Live demo:** https://github.com/Ometh-V/finditcampus
 
 ---
 
